@@ -21,7 +21,7 @@ dot :: Vector3 -> Vector3 -> Float
 dot (x, y, z) (a, b, c) = x * a + b * y + c * z
 
 cross :: Vector3 -> Vector3 -> Vector3
-cross (x, y, z) (a, b, c) = (b * z + c * y, - (a * z + c * x), a * y + b * x)
+cross (a, b, c) (x, y, z) = (b * z + c * y, - (a * z + c * x), a * y + b * x)
 
 normalize :: Vector3 -> Vector3
 normalize v
@@ -43,11 +43,14 @@ positionAtTime :: Ray -> Time -> Point3
 positionAtTime (base, dir) t = base `add` scalarMult dir t
 
 quadraticRoots :: Float -> Float -> Float -> [Float]
-quadraticRoots a b c
-  | discriminant >= 0.0 = [0.5 * (- b + sqrt discriminant), 0.5 * (- b - discriminant)]
-  | otherwise = []
-  where
-    discriminant = b * b - 4 * a * c
+quadraticRoots a b c = 
+  let discriminant = b*b - 4*a*c
+  in if discriminant < 0.0 then []
+  else [0.5 * (- b + sqrt discriminant), 0.5 * (- b - discriminant)]
+  -- | discriminant >= 0.0 = [0.5 * (- b + sqrt discriminant), 0.5 * (- b - discriminant)]
+  -- | otherwise = []
+  -- where
+  --  discriminant = b * b - 4 * a * c
 
 boolXor :: Bool -> Bool -> Bool
 boolXor True b = not b
@@ -116,7 +119,7 @@ intersect :: Ray -> Shape -> [(Time, Intersection)]
 intersect ray@(base, dir) (Sphere centre rad materialfn) =
   let a = squaredMagnitude dir
       b = 2 * (dir `dot` (base `sub` centre))
-      c = squaredMagnitude (base `sub` centre) - rad ^ 2
+      c = (squaredMagnitude (base `sub` centre)) - rad ^ 2
       times = filter (> epsilon) (quadraticRoots a b c)
       normalAtTime t = normalize (positionAtTime ray t `sub` centre)
       intersectionAtTime t = (normalAtTime t, positionAtTime ray t, ray, materialfn (positionAtTime ray t))
@@ -143,11 +146,113 @@ data Light
   | Spotlight Point3 Color
 
 backgroundColor :: Color
-backgroundColor = black
+backgroundColor = white
 
 lights :: [Light]
-lights = [ Spotlight (100, -30, 0) nearlyWhite,
-            Spotlight (-100, -100, 150) nearlyWhite]
+lights =
+  [ Spotlight (100, -30, 0) nearlyWhite,
+    Spotlight (-100, -100, 150) nearlyWhite
+  ]
+
+ambientLight :: Color
+ambientLight = (0.1, 0.1, 0.1)
+
+shapes :: [Shape]
+shapes =
+  [ Plane (normalize (0, -1, 0)) 50 shinyred,
+    Sphere
+      (50, 10, 100)
+      40
+      semishinygreen,
+    Sphere
+      (-80, 0, 80)
+      50
+      checkeredMatt
+  ]
+
+pointIsLit :: Point3 -> Point3 -> Bool
+pointIsLit point lightpos =
+  let path = lightpos `sub` point
+      timeAtLight = magnitude path
+      ray = (point, normalize path)
+      hits = concatMap (intersect ray) shapes
+      times = fst (unzip hits)
+   in if (null times) then True else (minimum times) > timeAtLight
+
+diffuseCoeff :: Vector3 -> Vector3 -> Float
+diffuseCoeff lightDir normal = max 0.0 (negate (normalize lightDir `dot` normalize normal))
+
+localLight :: Intersection -> Light -> Color
+localLight (normal, _, _, (materialcol, _, kd)) (Directional dir lightcol) =
+  let mixedColor = combineColor materialcol lightcol
+      diffuse = scaleColor mixedColor (diffuseCoeff dir normal * kd)
+   in diffuse
+localLight (normal, hitpoint, _, (materialcol, _, kd)) (Spotlight lightpos lightcol) =
+  let mixedColor = combineColor materialcol lightcol
+      diffuse = scaleColor mixedColor (kd * (diffuseCoeff (hitpoint `sub` lightpos) normal))
+   in if (pointIsLit hitpoint lightpos) then diffuse else black
+
+overallLighting :: Integer -> Intersection -> Color
+overallLighting depth hit =
+  let sumColors = foldr addColor black
+      localLighting = ambientLight `addColor` sumColors (map (localLight hit) lights)
+      globalLighting = if (depth < 2) then (reflectedRay depth hit) else black
+   in clamp (localLighting `addColor` globalLighting)
+
+raytrace :: Integer -> Ray -> Color
+raytrace depth ray =
+  let hits = concat (map (intersect ray) shapes)
+   in if (null hits)
+        then backgroundColor
+        else overallLighting depth (closest hits)
+
+reflectedRay :: Integer -> Intersection -> Color
+reflectedRay depth (normal, hitpoint, (_, inRayDir), (color, kr, _))
+  | kr == 0.0 = black
+  | otherwise =
+    let k = 2 * ((normalize normal) `dot` (normalize (neg inRayDir)))
+        outRayDir = (scalarMult (normalize normal) k) `sub` (neg inRayDir)
+        reflectedColor = raytrace (depth + 1) (hitpoint, outRayDir)
+     in scalarMult reflectedColor kr
+
+makePgm :: Integer -> Integer -> [Color] -> String
+makePgm width height xs = "P3\n" ++ show width ++ " " ++ show height ++ "\n255\n" ++ stringify (xs)
+  where
+    stringify [] = ""
+    stringify ((r, g, b) : xs) =
+      show (round (r * 255)) ++ " "
+        ++ show (round (g * 255))
+        ++ " "
+        ++ show (round (b * 255))
+        ++ " "
+        ++ stringify xs
+
+type View = (Point3, Float, Point3, Vector3)
+
+pixelGrid :: View -> Float -> Float -> [Point3]
+pixelGrid (camerapos, viewdist, lookingat, viewup) width height =
+  let grid = [(x, y, 0) | y <- [0 .. width -1], x <- [0 .. height -1]]
+      centreingOffset = (- width / 2.0, - height / 2.0, 0)
+      pixelOffsets = map (add centreingOffset) grid
+      viewdir = normalize (lookingat `sub` camerapos)
+      screenCentre = camerapos `add` (scalarMult viewdir viewdist)
+      viewright = viewdir `cross` viewup
+      transform (x, y, _) = screenCentre `add` (scalarMult viewright x) `add` (scalarMult (neg viewup) y)
+   in map transform pixelOffsets
+
+parallelProjection :: View -> Point3 -> Ray
+parallelProjection (camerapos, _, lookingat, _) point = (point, normalize (lookingat `sub` camerapos))
+
+perspectiveProjection :: View -> Point3 -> Ray
+perspectiveProjection (camerapos, _, _, _) point = (point, normalize (point `sub` camerapos))
+
+renderToPgm :: Float -> Float -> String
+renderToPgm width height =
+  let view = ((0, 0, -100), 100, (0, 0, 100), (0, -1, 0))
+      projection = perspectiveProjection view
+      rayCollection = map projection (pixelGrid view width height)
+      colorCollection = map (raytrace 0) rayCollection
+   in makePgm (round width) (round height) colorCollection
 
 main :: IO ()
-main = putStrLn "Hello, Haskell!"
+main = do writeFile "test.ppm" (renderToPgm 500 500)
