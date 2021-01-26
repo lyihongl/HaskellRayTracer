@@ -1,5 +1,3 @@
-module Main where
-
 type Vector3 = (Float, Float, Float)
 
 add :: Vector3 -> Vector3 -> Vector3
@@ -43,14 +41,11 @@ positionAtTime :: Ray -> Time -> Point3
 positionAtTime (base, dir) t = base `add` scalarMult dir t
 
 quadraticRoots :: Float -> Float -> Float -> [Float]
-quadraticRoots a b c = 
-  let discriminant = b*b - 4*a*c
-  in if discriminant < 0.0 then []
-  else [0.5 * (- b + sqrt discriminant), 0.5 * (- b - discriminant)]
-  -- | discriminant >= 0.0 = [0.5 * (- b + sqrt discriminant), 0.5 * (- b - discriminant)]
-  -- | otherwise = []
-  -- where
-  --  discriminant = b * b - 4 * a * c
+quadraticRoots a b c =
+  let discriminant = b * b - 4 * a * c
+   in if discriminant < 0.0
+        then []
+        else [0.5 * (- b + sqrt discriminant), 0.5 * (- b - sqrt discriminant)]
 
 boolXor :: Bool -> Bool -> Bool
 boolXor True b = not b
@@ -58,14 +53,14 @@ boolXor False b = b
 
 type Color = (Float, Float, Float)
 
-red, green, blue, white, black, midgrey, nearlyWhite :: Color
+red, green, blue, white, black, midgrey, nearlywhite :: Color
 red = (1.0, 0.0, 0.0)
 green = (0.0, 1.0, 0.0)
 blue = (0.0, 0.0, 1.0)
 white = (1.0, 1.0, 1.0)
 black = (0.0, 0.0, 0.0)
 midgrey = (0.5, 0.5, 0.5)
-nearlyWhite = (0.8, 0.8, 0.8)
+nearlywhite = (0.8, 0.8, 0.8)
 
 scaleColor :: Color -> Float -> Color
 scaleColor (r, g, b) k = (r * k, g * k, b * k)
@@ -87,8 +82,8 @@ shinyred _ = (red, 0.3, 0.9)
 semishinygreen _ = (green, 0.5, 0.7)
 shinywhite _ = (white, 0.3, 0.9)
 
-checkeredMatt :: Point3 -> Material
-checkeredMatt (x, y, z) =
+checkedMatt :: Point3 -> Material
+checkedMatt (x, y, z) =
   let xeven = even (truncate (x / 20.0))
       yeven = even (truncate (y / 20.0))
       zeven = even (truncate (z / 20.0))
@@ -119,7 +114,7 @@ intersect :: Ray -> Shape -> [(Time, Intersection)]
 intersect ray@(base, dir) (Sphere centre rad materialfn) =
   let a = squaredMagnitude dir
       b = 2 * (dir `dot` (base `sub` centre))
-      c = (squaredMagnitude (base `sub` centre)) - rad ^ 2
+      c = squaredMagnitude (base `sub` centre) - rad ^ 2
       times = filter (> epsilon) (quadraticRoots a b c)
       normalAtTime t = normalize (positionAtTime ray t `sub` centre)
       intersectionAtTime t = (normalAtTime t, positionAtTime ray t, ray, materialfn (positionAtTime ray t))
@@ -150,8 +145,12 @@ backgroundColor = white
 
 lights :: [Light]
 lights =
-  [ Spotlight (100, -30, 0) nearlyWhite,
-    Spotlight (-100, -100, 150) nearlyWhite
+  [ Spotlight (100, -500, 0) nearlywhite,
+    Spotlight (-100, -500, 150) nearlywhite,
+    Spotlight (400, -200, 0) white,
+    Spotlight (-400, -200, 0) white,
+    Spotlight (0, -10, 0) red,
+    Spotlight (0, -10, -400) nearlywhite
   ]
 
 ambientLight :: Color
@@ -160,14 +159,8 @@ ambientLight = (0.1, 0.1, 0.1)
 shapes :: [Shape]
 shapes =
   [ Plane (normalize (0, -1, 0)) 50 shinyred,
-    Sphere
-      (50, 10, 100)
-      40
-      semishinygreen,
-    Sphere
-      (-80, 0, 80)
-      50
-      checkeredMatt
+    Sphere (200, -200, 0) 200 shinywhite,
+    Sphere (-200, -200, 0) 100 checkedMatt
   ]
 
 pointIsLit :: Point3 -> Point3 -> Bool
@@ -248,11 +241,10 @@ perspectiveProjection (camerapos, _, _, _) point = (point, normalize (point `sub
 
 renderToPgm :: Float -> Float -> String
 renderToPgm width height =
-  let view = ((0, 0, -100), 100, (0, 0, 100), (0, -1, 0))
+  let view = ((0, 0, -350), 100, (0, 0, 100), (0, -1, 0))
       projection = perspectiveProjection view
       rayCollection = map projection (pixelGrid view width height)
       colorCollection = map (raytrace 0) rayCollection
    in makePgm (round width) (round height) colorCollection
 
-main :: IO ()
 main = do writeFile "test.ppm" (renderToPgm 500 500)
